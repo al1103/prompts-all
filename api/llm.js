@@ -33,7 +33,7 @@ module.exports = async (req, res) => {
   if (msgs[0].role !== "user") return json(res, 400, { error: "messages không hợp lệ" });
   const nScenes = (msgs[0].content.match(/^CẢNH \d+ \(/gm) || []).length;
   if (nScenes > c.maxScenesPerCall) return json(res, 400, { error: `mỗi lượt gọi tối đa ${c.maxScenesPerCall} cảnh` });
-  const model = "deepseek-v4-flash";
+  const model = "gpt-4o-mini";
   if (!rateOk(req, c)) return json(res, 429, { error: "quá nhiều lượt gọi, thử lại sau ít phút" }, { "Retry-After": "60" });
 
   // --- gọi AI ---

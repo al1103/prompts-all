@@ -1,0 +1,569 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI tạo prompt ảnh từ SRT</title>
+<style>
+:root{--bg:#f7f5ef;--fg:#1f1e1b;--muted:#77746b;--card:#fff;--line:#e2ded2;--accent:#c4512f;--accent-fg:#fff;--ok:#2f7d4f;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+@media (prefers-color-scheme:dark){:root{--bg:#171613;--fg:#efece4;--muted:#9a968a;--card:#211f1b;--line:#37342d;--accent:#e4784f;--accent-fg:#1a1410;--ok:#6cc48f}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+main{max-width:980px;margin:0 auto;padding:28px 20px 64px}
+h1{font-size:22px;margin:0 0 4px}
+.sub{color:var(--muted);margin:0 0 22px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin-bottom:16px}
+.card h2{font-size:12px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);margin:0 0 12px;font-weight:600}
+#drop{border:2px dashed var(--line);border-radius:10px;padding:26px;text-align:center;cursor:pointer;transition:.15s}
+#drop.over{border-color:var(--accent)}
+#drop b{color:var(--accent)}
+#drop small{display:block;color:var(--muted);margin-top:4px}
+details{margin-top:12px}
+summary{cursor:pointer;color:var(--muted);font-size:13px}
+textarea{width:100%;border:1px solid var(--line);border-radius:8px;background:transparent;color:var(--fg);font:13px/1.45 var(--mono);padding:10px;resize:vertical}
+.opts{display:flex;flex-wrap:wrap;gap:18px 26px;align-items:center}
+.opts label{display:flex;align-items:center;gap:8px}
+.opts input[type=number]{width:74px;padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:transparent;color:var(--fg);font:inherit}
+input:disabled{opacity:.4}
+.hint{color:var(--muted);font-size:13px;margin:8px 0 0}
+.row{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:14px 0 6px}
+.row:first-of-type{margin-top:0}
+.row span{font-weight:600}
+.row em{font-style:normal;color:var(--muted);font-size:13px;font-weight:400;margin-left:8px}
+button{font:inherit;cursor:pointer;border:1px solid var(--line);background:transparent;color:var(--fg);border-radius:8px;padding:6px 12px}
+button:hover{border-color:var(--accent)}
+button.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-fg)}
+button.ok{border-color:var(--ok);color:var(--ok)}
+.actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:14px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--muted);font-weight:600}
+td.t{color:var(--muted);white-space:nowrap}
+#summary-line{margin:0 0 12px;font-weight:600}
+.err{color:#d0432b}
+.wrap{overflow-x:auto}
+[hidden]{display:none !important}
+
+[hidden]{display:none !important}
+input:disabled,button:disabled{opacity:.45;cursor:not-allowed}
+</style>
+</head>
+<body>
+<main>
+  <h1>AI tạo prompt ảnh từ SRT</h1>
+  <p class="sub">Đưa file phụ đề <code>.srt</code> vào. AI đọc hiểu lời thoại rồi tự chia cảnh, quyết mỗi cảnh cần mấy vật thể và viết mô tả hình ảnh cho từng vật. Ra tiền tố / hậu tố / danh sách dòng để dán vào tool tạo ảnh hàng loạt.</p>
+  <p id="off" class="hint err" hidden></p>
+
+  <section class="card">
+    <h2>1 · File phụ đề</h2>
+    <div id="drop" tabindex="0"><b>Kéo file .srt vào đây</b> hoặc bấm để chọn<small id="fname">Chưa chọn file</small></div>
+    <input id="file" type="file" accept=".srt,text/plain" hidden>
+    <details><summary>Hoặc dán nội dung SRT</summary><textarea id="paste" rows="6" placeholder="1&#10;00:00:00,500 --> 00:00:04,500&#10;Nội dung câu thoại…"></textarea></details>
+  </section>
+
+  <section class="card">
+    <h2>2 · Thiết lập và gọi AI</h2>
+    <div class="opts">
+      <label>Mỗi cảnh khoảng <input id="sec" type="number" min="10" max="300" value="20"> giây</label>
+      <label>Tối đa <input id="maxsub" type="number" min="2" max="10" value="4"> vật thể / ảnh</label>
+      <label><input id="numbered" type="checkbox"> Đánh số dòng (<code>NN|</code>)</label>
+    </div>
+    <p class="hint">Nhịp nhanh nên 15–20 giây và 3–4 vật thể; lời chậm, trầm thì 25–35 giây. AI quyết số vật thể thực tế từng cảnh, từ 1 đến mức tối đa.</p>
+    <div class="opts" style="margin:12px 0 4px">
+      <label id="pw-wrap" hidden>Mật khẩu ứng dụng <input id="app-pw" type="password" autocomplete="off" style="width:150px" style="padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:transparent;color:var(--fg);font:inherit"></label>
+      <label id="key-wrap" hidden>Khóa API <input id="user-key" type="password" autocomplete="off" placeholder="sk-…" style="width:230px" style="padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:transparent;color:var(--fg);font:inherit"></label>
+      <label id="key-rem-wrap" hidden><input id="key-rem" type="checkbox"> nhớ trong trình duyệt này</label>
+      <button id="key-forget" hidden>Xoá khóa đã lưu</button>
+    </div>
+    <div class="opts" style="margin:6px 0 4px">
+      <label>Model <input id="ai-model-in" type="text" style="width:190px" style="padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:transparent;color:var(--fg);font:inherit"></label>
+      <label>Dự phòng <input id="ai-fb-in" type="text" style="width:150px" style="padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:transparent;color:var(--fg);font:inherit"></label>
+    </div>
+    <p class="hint" id="ai-keynote"></p>
+    <div class="actions"><button class="primary" id="ai-run">✦ Tạo prompt bằng AI</button></div>
+    <pre id="ai-log" hidden style="max-height:200px;overflow:auto;background:transparent;border:1px solid var(--line);border-radius:8px;padding:10px;font:12px/1.45 var(--mono);white-space:pre-wrap"></pre>
+  </section>
+
+  <section id="result" class="card" hidden>
+    <h2>3 · Kết quả</h2>
+    <p id="summary-line"></p>
+    <p id="stale" class="hint err" hidden>⚠ SRT hoặc thông số đã đổi sau lần gọi AI: bấm “Tạo prompt bằng AI” để tính lại.</p>
+    <div class="wrap"><table><thead><tr><th>Cảnh</th><th>Thời gian</th><th>Ý</th><th>Vật thể</th><th>Nội dung (mô tả của AI)</th></tr></thead><tbody id="tbody"></tbody></table></div>
+    <div class="row"><span>Tiền tố (PREFIX)</span><button data-copy="pre">Sao chép</button></div>
+    <textarea id="pre" rows="3" readonly></textarea>
+    <div class="row"><span>Hậu tố (SUFFIX)</span><button data-copy="suf">Sao chép</button></div>
+    <textarea id="suf" rows="3" readonly></textarea>
+    <div class="row"><span>Danh sách mô tả <em id="nlines"></em></span><button data-copy="lines">Sao chép</button></div>
+    <textarea id="lines" rows="9" readonly wrap="off"></textarea>
+    <div class="actions">
+      <button class="primary" id="dl-plan">Tải plan.json</button>
+      <button id="dl-all">Tải prompts đầy đủ (.txt)</button>
+    </div>
+    <p class="hint">Dán 3 ô trên vào tool tạo ảnh hàng loạt (tiền tố, hậu tố, danh sách dòng). <code>plan.json</code> ghi cách chia cảnh để dựng video sau này.</p>
+  </section>
+</main>
+<script>
+const SRTP = (() => {
+  const FLOW_PREFIX = "Minimal hand-drawn sketch illustration, Notion-style doodle, thin dark gray pencil outlines on a FLAT warm beige paper background #F5EBD7, 16:9 landscape, only small accents of red, orange and blue, flat background with no gradient, no shadow, no texture, no frame, no border.";
+  const FLOW_SUFFIX = "Draw only the objects and characters, not the words. Simple outlines, few lines, generous white space. No text, no letters, no numbers, no labels, no captions, no watermark, no photorealism, no 3D, no shading, no painterly texture, no dense background.";
+  const STYLE = [
+    "Minimal hand-drawn sketch illustration, Notion-style doodle, thin dark gray pencil",
+    "outlines on a FLAT warm beige paper background #F5EBD7, 16:9 landscape.",
+    "Only small accents of red, orange and blue. Flat background: no gradient, no shadow,",
+    "no texture, no frame, no border.",
+    "",
+    "This image illustrates {n} moments of a story, in this exact order. Draw ONE separate subject",
+    "per moment, arranged LEFT TO RIGHT in the same order as listed (1 = leftmost, {n} = rightmost),",
+    "with wide empty space between them. Subjects must never touch, overlap or be cropped.",
+    "",
+    "{items}",
+    "",
+    "Draw only the objects/characters, not the words. Simple outlines, few lines, generous white space.",
+    "No text, no letters, no numbers, no labels, no captions, no watermark, no photorealism,",
+    "no 3D, no shading, no painterly texture, no dense background."
+  ].join("\n");
+  const REMIND = [
+    "(Nếu ảnh ra có chữ hoặc các vật dính nhau: bảo \"remove all text and move the subjects",
+    "further apart, keep the same style\". Từ cảnh 2 trở đi: đính kèm ảnh cảnh 1 và thêm",
+    "\"same drawing style, same line weight, same palette as this reference\".)"
+  ].join("\n");
+
+  const ASK_HEAD = ["Bạn là họa sĩ phân cảnh cho video whiteboard vẽ tay.", "Dưới đây là lời thuyết minh (tiếng Việt) đã chia thành từng CẢNH. Mỗi cảnh có các MỤC đánh số, mỗi mục sẽ được vẽ thành MỘT vật thể riêng trong ảnh.", "", "NHIỆM VỤ: với MỖI mục, viết đúng MỘT mô tả bằng tiếng Anh (tối đa 25 từ) về thứ cần VẼ.", "", "QUY TẮC", "1. Chỉ mô tả thứ nhìn thấy được: vật, người, biểu tượng đơn giản. Ý trừu tượng phải đổi thành ẩn dụ hình ảnh (ví dụ \"không có Internet\" -> a crossed-out wifi symbol; \"hai nghìn năm trước\" -> an hourglass beside an old calendar).", "2. Mục nhắc nhiều thứ (đường, cầu, nhà tắm...) -> gộp thành MỘT cụm gọn trong cùng một vật thể (ví dụ: a small cluster of a Roman road, a stone bridge, a bathhouse and an aqueduct).", "3. Tuyệt đối không có chữ, số, nhãn, logo, bong bóng thoại trong hình. Không mô tả nền, khung hay màu nền.", "4. Giữ nhất quán giữa các mục và các cảnh: nhân vật lặp lại thì mô tả giống nhau.", "5. Mỗi mô tả là một vật thể hoặc cụm tách biệt, không chồng lên mục khác.", "", "ĐẦU RA: chỉ MỘT khối JSON, không giải thích, không dùng markdown. Khóa là SỐ CẢNH (đúng như ghi sau chữ \"CẢNH\"), giá trị là danh sách mô tả theo đúng thứ tự và đúng SỐ LƯỢNG mục của cảnh đó.", "Ví dụ định dạng: {\"3\": [\"...\", \"...\"], \"4\": [\"...\", \"...\", \"...\"]}"].join("\n") + "\n";
+  function buildAsk(records) {
+    const body = [];
+    for (const [si, narr] of records) { body.push(`CẢNH ${si} (${narr.length} mục)`); narr.forEach((t, gi) => body.push(`${gi + 1}. ${t}`)); }
+    return ASK_HEAD + "\n=== LỜI THUYẾT MINH ===\n" + body.join("\n") + "\n";
+  }
+  function parseVisuals(text) {
+    const i = text.indexOf("{"), j = text.lastIndexOf("}");
+    if (i < 0 || j <= i) return { error: "Không thấy khối JSON {…} trong câu trả lời." };
+    let data; try { data = JSON.parse(text.slice(i, j + 1)); } catch (e) { return { error: "JSON lỗi (" + e.message + "). Thường do AI thêm chữ hoặc thừa dấu phẩy; bảo AI “chỉ trả JSON”." }; }
+    const map = {};
+    for (const [k, v] of Object.entries(data)) {
+      const d = String(k).replace(/\D/g, "");
+      if (d && Array.isArray(v) && v.every(x => typeof x === "string")) map[parseInt(d, 10)] = v.map(x => x.replace(/\s+/g, " ").trim());
+    }
+    return { map };
+  }
+
+  const ASK_PLAN_HEAD = ["Bạn là đạo diễn hình ảnh cho video whiteboard vẽ tay. Mỗi CẢNH là MỘT ảnh; các vật thể trong ảnh được vẽ lần lượt theo lời thuyết minh.", "Dưới đây là lời thuyết minh (tiếng Việt) của từng cảnh, đã cắt thành các Ý đánh số kèm thời lượng.", "", "NHIỆM VỤ: với MỖI cảnh, hãy đọc hiểu rồi tự quyết định:", "(a) Cảnh cần bao nhiêu VẬT THỂ: từ 1 đến TỐI ĐA {MAX} vật thể. Ít hơn nếu lời thuyết minh chỉ nói một ý lớn; nhiều hơn nếu có nhiều sự việc hoặc đối tượng khác nhau cần vẽ.", "(b) Gom các Ý LIỀN NHAU thành từng vật thể. Các dải Ý phải nối tiếp nhau, phủ đủ từ Ý 1 đến Ý cuối của cảnh, không bỏ sót, không chồng lấn. Ngắt ở chỗ đổi đối tượng, đổi sự việc hoặc chuyển ý; đừng ngắt giữa mệnh đề bối cảnh (thời gian, nơi chốn, điều kiện) và vế chính của nó.", "(c) Viết đúng MỘT mô tả bằng tiếng Anh (tối đa 25 từ) cho thứ cần VẼ của mỗi vật thể.", "", "QUY TẮC", "1. Mỗi vật thể cần đủ thời lượng để vẽ (khoảng 4 giây trở lên); nếu có thể, gộp các Ý dưới 2.5 giây vào Ý bên cạnh.", "2. Chỉ mô tả thứ nhìn thấy được: vật, người, biểu tượng đơn giản. Ý trừu tượng phải đổi thành ẩn dụ hình ảnh (ví dụ \"không có Internet\" -> a crossed-out wifi symbol; \"hai nghìn năm trước\" -> an hourglass beside an old calendar).", "3. Vật thể nhắc nhiều thứ (đường, cầu, nhà tắm...) -> gộp thành MỘT cụm gọn (ví dụ: a small cluster of a Roman road, a stone bridge, a bathhouse and an aqueduct).", "4. Tuyệt đối không có chữ, số, nhãn, logo, bong bóng thoại trong hình. Không mô tả nền, khung hay màu nền.", "5. Giữ nhất quán giữa các vật thể và các cảnh: nhân vật lặp lại thì mô tả giống nhau. Mỗi mô tả là một vật thể hoặc cụm tách biệt, không chồng lên vật thể khác.", "", "ĐẦU RA: chỉ MỘT khối JSON, không giải thích, không dùng markdown. Khóa là SỐ CẢNH (đúng như ghi sau chữ \"CẢNH\"); giá trị là danh sách các vật thể theo thứ tự từ trái sang phải, mỗi phần tử có dạng {\"from\": <Ý đầu>, \"to\": <Ý cuối>, \"visual\": \"<mô tả tiếng Anh>\"}.", "Ví dụ định dạng: {\"3\": [{\"from\": 1, \"to\": 2, \"visual\": \"...\"}, {\"from\": 3, \"to\": 3, \"visual\": \"...\"}]}"].join("\n") + "\n";
+  function buildAskPlan(items, cues, maxSubjects) {   // items: [[si, idxs]]  (giống build_ask_plan của make_prompts.py)
+    const body = [];
+    for (const [si, idxs] of items) {
+      const dms = cues[idxs[idxs.length - 1]].endMs - cues[idxs[0]].startMs;
+      body.push(`CẢNH ${si} (${idxs.length} ý, ${Math.floor((dms + 500) / 1000)}s)`);
+      idxs.forEach((c, k) => {
+        const t = Math.floor((cues[c].endMs - cues[c].startMs + 50) / 100);
+        body.push(`${k + 1}. [${Math.floor(t / 10)}.${t % 10}s] ${cues[c].text}`);
+      });
+    }
+    return ASK_PLAN_HEAD.replace("{MAX}", String(maxSubjects)) + "\n=== LỜI THUYẾT MINH ===\n" + body.join("\n") + "\n";
+  }
+  function validatePlan(entries, m, maxSubjects) {   // giống validate_plan của srt_common.py
+    if (!Array.isArray(entries) || !entries.length) return "danh sách rỗng";
+    if (entries.length > Math.max(1, maxSubjects)) return `${entries.length} vật thể > tối đa ${maxSubjects}`;
+    let nxt = 1;
+    for (const e of entries) {
+      if (e === null || typeof e !== "object" || Array.isArray(e)) return "phần tử không phải đối tượng {from,to,visual}";
+      const f = parseInt(e.from, 10), t = parseInt(e.to, 10);
+      if (Number.isNaN(f) || Number.isNaN(t)) return "thiếu from/to";
+      if (f !== nxt) return `các dải Ý phải liền nhau: mong đợi bắt đầu từ ${nxt}, nhận ${f}`;
+      if (t < f || t > m) return `dải ${f}-${t} không hợp lệ (cảnh có ${m} ý)`;
+      if (typeof e.visual !== "string" || !e.visual.trim()) return "thiếu mô tả visual";
+      nxt = t + 1;
+    }
+    return nxt !== m + 1 ? `chưa phủ hết ${m} ý (mới tới ý ${nxt - 1})` : null;
+  }
+  function parsePlanReply(text) {   // trả {map:{cảnh:[...]}} hoặc {error}
+    const i = text.indexOf("{"), j = text.lastIndexOf("}");
+    if (i < 0 || j <= i) return { error: "không thấy khối JSON" };
+    let data; try { data = JSON.parse(text.slice(i, j + 1)); } catch (e) { return { error: "JSON lỗi" }; }
+    const map = {};
+    for (const [k, v] of Object.entries(data)) {
+      const d = String(k).replace(/\D/g, "");
+      if (d && Array.isArray(v)) map[parseInt(d, 10)] = v.map(e => (e && typeof e === "object" && typeof e.visual === "string") ? { ...e, visual: e.visual.replace(/\s+/g, " ").trim() } : e);
+    }
+    return { map };
+  }
+
+  // làm tròn kiểu Python (half-even) để chia nhóm câu giống hệt make_prompts.py
+  const pyRound = x => { const r = Math.round(x); return Math.abs(x % 1) === 0.5 ? 2 * Math.round(x / 2) : r; };
+  const pad2 = n => String(n).padStart(2, "0");
+
+  function parseSrt(text) {
+    text = text.replace(/^\uFEFF/, "").replace(/\r+\n/g, "\n").replace(/\r/g, "\n").trim();
+    const cues = [];
+    if (!text) return cues;
+    for (const block of text.split(/\n\s*\n/)) {
+      const lines = block.trim().split("\n").filter(l => l.trim());
+      for (let i = 0; i < lines.length; i++) {
+        const m = lines[i].match(/(\d+):(\d+):(\d+)[,.](\d+)\s*-->\s*(\d+):(\d+):(\d+)[,.](\d+)/);
+        if (m) {
+          const g = m.slice(1).map(Number);
+          cues.push({ startMs: ((g[0] * 60 + g[1]) * 60 + g[2]) * 1000 + g[3],
+                      endMs: ((g[4] * 60 + g[5]) * 60 + g[6]) * 1000 + g[7],
+                      text: lines.slice(i + 1).join(" ").trim() });
+          break;
+        }
+      }
+    }
+    return cues;
+  }
+
+  const MIN_PIECE_MS = 3000, MIN_PIECE_CHARS = 12;
+  const cl = s => [...s].length;   // đếm theo ký tự Unicode như Python len()
+  function pieces(text) {
+    const parts = text.replace(/([.!?…]["”’)\]]*)\s+/g, "$1\u0001").split("\u0001").map(p => p.trim()).filter(Boolean);
+    const merged = [];
+    for (const p of parts) {
+      if (merged.length && cl(p) < MIN_PIECE_CHARS) merged[merged.length - 1] += " " + p; else merged.push(p);
+    }
+    if (merged.length > 1 && cl(merged[0]) < MIN_PIECE_CHARS) { merged[1] = merged[0] + " " + merged[1]; merged.shift(); }
+    return merged;
+  }
+  function splitLongCues(cues, sec) {
+    if (!(sec > 0)) return cues;
+    const out = [];
+    for (const c of cues) {
+      const dur = c.endMs - c.startMs;
+      if (dur <= sec * 1000) { out.push(c); continue; }
+      const ps = pieces(c.text);
+      const maxp = Math.max(1, Math.floor(dur / MIN_PIECE_MS));
+      while (ps.length > maxp) {
+        let best = 0, bv = Infinity;
+        for (let i = 0; i < ps.length - 1; i++) { const v = cl(ps[i]) + cl(ps[i + 1]); if (v < bv) { bv = v; best = i; } }
+        ps[best] = ps[best] + " " + ps[best + 1]; ps.splice(best + 1, 1);
+      }
+      if (ps.length < 2) { out.push(c); continue; }
+      const total = ps.reduce((a, p) => a + cl(p), 0); let cum = 0;
+      ps.forEach((p, i) => {
+        const s = c.startMs + Math.floor(dur * cum / total); cum += cl(p);
+        const e = i === ps.length - 1 ? c.endMs : c.startMs + Math.floor(dur * cum / total);
+        out.push({ startMs: s, endMs: e, text: p });
+      });
+    }
+    return out;
+  }
+
+  // ---- Chia theo Ý (beats): giống hệt srt_common.py ----
+  const MIN_BEAT_MS = 2500, MIN_BEAT_CHARS = 14, MIN_COMMA_LEFT = 12;
+  const STRIP = ".,!?…;:\"'“”‘’()[]{}-–—«»", CLOSERS = "\"'”’)]}»", ENDERS = ".!?…";
+  const SETTING = new Set(["khi","lúc","sau","trước","nếu","vì","do","tuy","mặc","năm","vào","trong","ở","tại","để","ngay","theo","với","từ","đến","nhờ","bởi","dù","hễ","nhân","sáng","chiều","tối","hôm","ngày","đêm","mùa","thế","như","càng","cứ","dưới","trên"]);
+  const CONNECT = [["rồi"],["nhưng"],["song"],["sau","đó"],["tiếp","đó"],["kế","đó"],["tiếp","theo"],["cuối","cùng"],["đột","nhiên"],["bỗng"],["bất","ngờ"],["thế","là"],["vậy","là"],["trong","khi"],["đồng","thời"],["khiến"]];
+  function stripSet(w, set) { const ch = [...w]; let a = 0, b = ch.length; while (a < b && set.includes(ch[a])) a++; while (b > a && set.includes(ch[b - 1])) b--; return ch.slice(a, b).join(""); }
+  const norm = w => stripSet(w, STRIP).toLowerCase();
+  function mergeShort(pieces, minChars) {
+    const merged = [];
+    for (const p of pieces) { if (merged.length && cl(p) < minChars) merged[merged.length - 1] += " " + p; else merged.push(p); }
+    if (merged.length > 1 && cl(merged[0]) < minChars) { merged[1] = merged[0] + " " + merged[1]; merged.shift(); }
+    return merged;
+  }
+  function beats(text) {
+    const words = text.split(/\s+/).filter(Boolean);
+    const pieces = []; let cur = [], seen = false;
+    const jl = a => cl(a.join(" "));
+    words.forEach((w, i) => {
+      if (cur.length && jl(cur) >= MIN_BEAT_CHARS) {
+        for (const conn of CONNECT) {
+          let match = true;
+          for (let k = 0; k < conn.length; k++) { if (i + k >= words.length || norm(words[i + k]) !== conn[k]) { match = false; break; } }
+          if (match) { pieces.push(cur.join(" ")); cur = []; seen = false; break; }
+        }
+      }
+      cur.push(w);
+      const ch = [...w]; let e = ch.length; while (e > 0 && CLOSERS.includes(ch[e - 1])) e--;
+      const last = e > 0 ? ch[e - 1] : "";
+      if (last !== "" && (ENDERS.includes(last) || last === ";")) { pieces.push(cur.join(" ")); cur = []; seen = false; }
+      else if (last === ",") {
+        if (SETTING.has(norm(cur[0])) && !seen) seen = true;
+        else if (jl(cur) >= MIN_COMMA_LEFT) { pieces.push(cur.join(" ")); cur = []; seen = false; }
+      }
+    });
+    if (cur.length) pieces.push(cur.join(" "));
+    return mergeShort(pieces, MIN_BEAT_CHARS);
+  }
+  function applyPieces(c, ps, minMs) {
+    const dur = c.endMs - c.startMs, maxp = Math.max(1, Math.floor(dur / minMs));
+    while (ps.length > maxp) {
+      let best = 0, bv = Infinity;
+      for (let i = 0; i < ps.length - 1; i++) { const v = cl(ps[i]) + cl(ps[i + 1]); if (v < bv) { bv = v; best = i; } }
+      ps[best] = ps[best] + " " + ps[best + 1]; ps.splice(best + 1, 1);
+    }
+    if (ps.length < 2) return [c];
+    const out = [], total = ps.reduce((a, p) => a + cl(p), 0); let cum = 0;
+    ps.forEach((p, i) => {
+      const s = c.startMs + Math.floor(dur * cum / total); cum += cl(p);
+      const e = i === ps.length - 1 ? c.endMs : c.startMs + Math.floor(dur * cum / total);
+      out.push({ startMs: s, endMs: e, text: p });
+    });
+    return out;
+  }
+  function splitBeats(cues) { const out = []; for (const c of cues) out.push(...applyPieces(c, beats(c.text), MIN_BEAT_MS)); return out; }
+  function endsSentence(t) {
+    const ch = [...t]; let e = ch.length; while (e > 0 && CLOSERS.includes(ch[e - 1])) e--;
+    const last = e > 0 ? ch[e - 1] : "";
+    return last !== "" && (ENDERS.includes(last) || last === ";");
+  }
+  function groupBeats(idxs, maxSubjects, cues) {
+    const groups = idxs.map(i => [i]);
+    while (groups.length > Math.max(1, maxSubjects)) {
+      const lens = groups.map(g => g.reduce((a, c) => a + cl(cues[c].text), 0));
+      let best = 0, bv = Infinity;
+      for (let i = 0; i < groups.length - 1; i++) {
+        const v = lens[i] + lens[i + 1] + (endsSentence(cues[groups[i][groups[i].length - 1]].text) ? 1000 : 0);
+        if (v < bv) { bv = v; best = i; }
+      }
+      groups[best] = groups[best].concat(groups[best + 1]); groups.splice(best + 1, 1);
+    }
+    return groups;
+  }
+
+  function splitScenes(cues, sceneMs) {
+    const scenes = []; let cur = [0];
+    for (let i = 1; i < cues.length; i++) {
+      const span = cues[i].endMs - cues[cur[0]].startMs;
+      if (span > sceneMs && cur.length >= 2) { scenes.push(cur); cur = [i]; } else cur.push(i);
+    }
+    if (cur.length) {
+      if (scenes.length && cur.length < 2) scenes[scenes.length - 1] = scenes[scenes.length - 1].concat(cur);
+      else scenes.push(cur);
+    }
+    return scenes;
+  }
+
+  function groupCues(idxs, maxSubjects, cps = 1.5) {
+    const k = Math.max(2, Math.min(maxSubjects, Math.ceil(idxs.length / cps)));
+    const per = idxs.length / k; const groups = []; let start = 0;
+    for (let i = 0; i < k; i++) {
+      const end = i === k - 1 ? idxs.length : pyRound((i + 1) * per);
+      const g = idxs.slice(Math.floor(start), Math.floor(end));
+      if (g.length) groups.push(g);
+      start = end;
+    }
+    return groups;
+  }
+
+  function build(cues, opts) {
+    const o = Object.assign({ sceneSec: 30, maxSubjects: 5, cps: 1.5, splitLong: 0, beats: false, visuals: null, aiplan: null, srtName: "sub.srt" }, opts || {});
+    const scenes = splitScenes(cues, o.sceneSec * 1000);
+    const out = { prefix: FLOW_PREFIX, suffix: FLOW_SUFFIX, scenes: [], linesPlain: [], linesNum: [], plan: { srt: o.srtName, splitLong: o.beats ? 0 : o.splitLong, beats: !!o.beats, scenes: [] } };
+    const allTxt = [];
+    const vmap = o.visuals || {}, hasVis = Object.keys(vmap).length > 0;
+    out.records = []; out.visReport = { applied: 0, warn: [], missing: [], planApplied: 0, noPlan: [] };
+    const pmap = o.aiplan || {}, hasPlan = Object.keys(pmap).length > 0;
+    scenes.forEach((idxs, s0) => {
+      const si = s0 + 1;
+      let entry = pmap[si], aiVis;
+      if (entry === undefined && hasPlan) out.visReport.noPlan.push(si);
+      if (entry !== undefined) {
+        const err = validatePlan(entry, idxs.length, o.maxSubjects);
+        if (err) { out.visReport.warn.push(`cảnh ${si}: kế hoạch AI không hợp lệ (${err})`); entry = undefined; }
+        else aiVis = entry.map(e => e.visual);
+      }
+      const groups = aiVis !== undefined ? entry.map(e => idxs.slice(parseInt(e.from, 10) - 1, parseInt(e.to, 10)))
+        : (o.beats ? groupBeats(idxs, o.maxSubjects, cues) : groupCues(idxs, o.maxSubjects, Math.max(1, o.cps)));
+      if (aiVis !== undefined) out.visReport.planApplied++;
+      const narr = groups.map(g => g.map(c => cues[c].text).join(" "));
+      out.records.push([si, narr]);
+      let vis;
+      if (aiVis !== undefined) vis = aiVis;
+      else {
+        vis = vmap[si];
+        if (vis !== undefined && vis.length !== groups.length) { out.visReport.warn.push(`cảnh ${si}: AI trả ${vis.length} mô tả nhưng cảnh có ${groups.length} vật thể`); vis = undefined; }
+        else if (vis === undefined && hasVis) out.visReport.missing.push(si);
+      }
+      if (vis !== undefined) out.visReport.applied++;
+      const texts = vis !== undefined ? vis : narr;
+      const items = texts.map((t, gi) => `${gi + 1}. ${t}`).join("\n");
+      let prompt = STYLE.split("{n}").join(String(groups.length)).replace("{items}", () => items);
+      if (vis === undefined) prompt = prompt.replace("This image illustrates", "The lines below are Vietnamese narration. This image illustrates");
+      const subj = texts.map((t, gi) => `(${gi + 1}) ${t}`).join(" ");
+      const fline = (`${groups.length} separate subjects, one per numbered moment, arranged LEFT TO RIGHT in this exact ` +
+        `order with wide empty space between them, never touching or overlapping. ` +
+        `${vis !== undefined ? "Subjects" : "Vietnamese narration per moment"}: ${subj}`).replace(/\s+/g, " ").trim();
+      const dur = (cues[idxs[idxs.length - 1]].endMs - cues[idxs[0]].startMs) / 1000;
+      out.linesPlain.push(fline); out.linesNum.push(`${pad2(si)}|${fline}`);
+      allTxt.push(`===== CẢNH ${pad2(si)}  (${Math.floor((cues[idxs[idxs.length - 1]].endMs - cues[idxs[0]].startMs + 500) / 1000)}s, câu ${idxs[0] + 1}-${idxs[idxs.length - 1] + 1}, ` +
+                  `${groups.length} vật thể)  -> lưu ảnh thành scene-${pad2(si)}.png =====\n${prompt}`);
+      const cueGroups = groups.map(g => g.length > 1
+        ? `${g[0] - idxs[0] + 1}-${g[g.length - 1] - idxs[0] + 1}` : String(g[0] - idxs[0] + 1)).join(",");
+      out.plan.scenes.push({ scene: si, cueFrom: idxs[0] + 1, cueTo: idxs[idxs.length - 1] + 1,
+                             subjects: groups.length, cueGroups, durationSec: Math.round(dur * 10) / 10 });
+      out.scenes.push({ si, first: idxs[0], last: idxs[idxs.length - 1], subjects: groups.length, dur, parts: texts,
+                         startMs: cues[idxs[0]].startMs, endMs: cues[idxs[idxs.length - 1]].endMs });
+    });
+    out.allTxt = allTxt.join("\n\n") + "\n\n" + REMIND + "\n";
+    out.totalSec = cues.length ? (cues[cues.length - 1].endMs - cues[0].startMs) / 1000 : 0;
+    return out;
+  }
+  return { parseSrt, splitLongCues, splitBeats, splitScenes, groupCues, groupBeats, build, buildAsk, parseVisuals, buildAskPlan, validatePlan, parsePlanReply };
+})();
+window.SRTP = SRTP;
+
+(() => {
+  const $ = id => document.getElementById(id);
+  const pad = n => String(n).padStart(2, "0");
+  const mmss = ms => { const s = Math.round(ms / 1000); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; };
+  const UI_TOKEN = (document.querySelector('meta[name="ui-token"]') || {}).content || "";
+  let srtText = "", srtName = "sub.srt", aiInfo = null, view = null, viewKey = "", viewModel = "";
+
+  function paramsKey() {
+    let x = 0; for (let i = 0; i < srtText.length; i++) x = (x * 31 + srtText.charCodeAt(i)) | 0;
+    return `${x}|${srtText.length}|${Math.max(10, +$("sec").value || 20)}|${Math.max(2, +$("maxsub").value || 4)}`;
+  }
+
+  // ---------- gọi máy chủ ----------
+  const saved = k => { try { return localStorage.getItem(k) || sessionStorage.getItem(k) || ""; } catch (e) { return ""; } };
+  function authHeaders() {
+    const h = { "X-Requested-With": "srtwb" };
+    if (UI_TOKEN) h["X-UI-Token"] = UI_TOKEN;
+    const pw = $("app-pw").value.trim(), key = $("user-key").value.trim();
+    if (pw) h["X-App-Password"] = pw;
+    if (key && !$("key-wrap").hidden) h["X-LLM-Key"] = key;
+    return h;
+  }
+  async function api(path, opt = {}) {
+    const r = await fetch(path, { ...opt, headers: { "Content-Type": "application/json", ...authHeaders(), ...(opt.headers || {}) } });
+    let data = {}; try { data = await r.json(); } catch (e) { /* bỏ qua */ }
+    if (!r.ok) throw new Error(data.error || ("HTTP " + r.status));
+    return data;
+  }
+  function persistCreds() {
+    try {
+      const k = $("user-key").value.trim(), rem = $("key-rem").checked;
+      localStorage.removeItem("srtwb_key"); sessionStorage.removeItem("srtwb_key");
+      if (k) (rem ? localStorage : sessionStorage).setItem("srtwb_key", k);
+      const pw = $("app-pw").value.trim(); if (pw) sessionStorage.setItem("srtwb_pw", pw);
+      $("key-forget").hidden = !(k && rem);
+    } catch (e) { /* trình duyệt chặn lưu trữ: bỏ qua */ }
+  }
+  $("key-forget").onclick = () => { try { localStorage.removeItem("srtwb_key"); sessionStorage.removeItem("srtwb_key"); } catch (e) { /* */ } $("user-key").value = ""; $("key-rem").checked = false; $("key-forget").hidden = true; };
+
+  async function initAi() {
+    if (location.protocol === "file:") { $("off").hidden = false; $("off").textContent = "Hãy mở trang qua địa chỉ web đã deploy (hoặc chạy node dev-server.js), không mở trực tiếp file này."; $("ai-run").disabled = true; return; }
+    try { aiInfo = await api("/api/status"); } catch (e) { $("off").hidden = false; $("off").textContent = "Không kết nối được máy chủ: " + e.message; $("ai-run").disabled = true; return; }
+    if (!(aiInfo.serverKey || aiInfo.allowUserKeys)) {
+      $("off").hidden = false; $("off").textContent = "Máy chủ chưa cấu hình AI: chủ trang cần đặt LLM_BASE_URL (và LLM_API_KEY, hoặc bật ALLOW_USER_KEYS=1).";
+      $("ai-run").disabled = true; return;
+    }
+    $("pw-wrap").hidden = !aiInfo.needsPassword;
+    const userKeys = aiInfo.allowUserKeys && !aiInfo.serverKey;   // máy chủ đã có khóa thì người dùng khỏi nhập
+    $("key-wrap").hidden = !userKeys; $("key-rem-wrap").hidden = !userKeys;
+    $("ai-model-in").value = aiInfo.model; $("ai-fb-in").value = aiInfo.fallback || "";
+    $("ai-keynote").textContent = aiInfo.serverKey
+      ? "Máy chủ đã có khóa API; khóa không bao giờ vào trình duyệt."
+      : "Nhập khóa API của bạn: khóa chỉ đi tới máy chủ này (qua HTTPS) cho đúng lần gọi này, không được lưu ở máy chủ." + (aiInfo.secure ? "" : " ⚠ Kết nối này KHÔNG mã hoá (không phải HTTPS): đừng nhập khóa ở đây.");
+    $("user-key").value = saved("srtwb_key"); $("app-pw").value = saved("srtwb_pw");
+    $("key-rem").checked = !!localStorage.getItem("srtwb_key"); $("key-forget").hidden = !userKeys || !saved("srtwb_key");
+  }
+
+  // ---------- trình duyệt điều phối, máy chủ chỉ chuyển tiếp từng lượt ----------
+  async function runAi(sec, maxsub, model, fallback, log) {
+    const cues = SRTP.splitBeats(SRTP.parseSrt(srtText));
+    const scenes = SRTP.splitScenes(cues, sec * 1000);
+    const cap = aiInfo.maxScenes || 400;
+    if (!cues.length || !scenes.length) throw new Error("không đọc được phụ đề (cần dòng “00:00:01,000 --> 00:00:03,000”)");
+    if (scenes.length > cap) throw new Error(`SRT tạo ra ${scenes.length} cảnh, vượt giới hạn ${cap} (tăng số giây mỗi cảnh hoặc chia nhỏ SRT).`);
+    const per = Math.max(1, Math.min(4, aiInfo.maxScenesPerCall || 4));
+    const items = scenes.map((idxs, i) => [i + 1, idxs]);
+    const chunks = []; for (let k = 0; k < items.length; k += per) chunks.push(items.slice(k, k + per));
+    const lines = []; const push = t => { lines.push(t); log.textContent = lines.join("\n"); log.scrollTop = log.scrollHeight; };
+    push(`→ ${scenes.length} cảnh, ${chunks.length} lượt gọi AI`);
+    const plan = {}; let done = 0, next = 0;
+    async function worker() {
+      while (next < chunks.length) {
+        const ci = next++, chunk = chunks[ci];
+        const units = Object.fromEntries(chunk.map(([si, idxs]) => [si, idxs.length]));
+        const messages = [{ role: "user", content: SRTP.buildAskPlan(chunk, cues, maxsub) }];
+        for (let rnd = 0; rnd <= 2; rnd++) {
+          const r = await api("/api/llm", { method: "POST", body: JSON.stringify({ messages, model, fallback }) });
+          const parsed = SRTP.parsePlanReply(r.content), problems = {};
+          for (const [s, m] of Object.entries(units)) {
+            if (plan[s]) continue;
+            const e = parsed.map ? parsed.map[s] : undefined;
+            const err = e === undefined ? "không có trong câu trả lời" : SRTP.validatePlan(e, m, maxsub);
+            if (err === null) plan[s] = e; else problems[s] = `cảnh ${s} (${m} ý, tối đa ${maxsub} vật thể): ${err}`;
+          }
+          if (!Object.keys(problems).length || rnd === 2) break;
+          push(`   … lượt ${ci + 1}: ${Object.keys(problems).length} cảnh chưa đúng, hỏi lại (vòng ${rnd + 1}/2)`);
+          messages.push({ role: "assistant", content: r.content }, { role: "user", content: "Chưa đúng: " + Object.values(problems).join("; ") + ". Trả lại JSON cho các cảnh trên, cùng định dạng, chỉ JSON." });
+        }
+        done++; push(`[${done}/${chunks.length}] cảnh ${chunk[0][0]}–${chunk[chunk.length - 1][0]} ✓`);
+      }
+    }
+    await Promise.all(Array.from({ length: Math.min(3, chunks.length) }, worker));
+    const out = SRTP.build(cues, { sceneSec: sec, maxSubjects: maxsub, beats: true, aiplan: plan, srtName });
+    push(`✓ Xong: AI phân cảnh cho ${out.visReport.planApplied}/${scenes.length} cảnh` + (out.visReport.warn.length + out.visReport.noPlan.length ? `; ${scenes.length - out.visReport.planApplied} cảnh AI không đạt → dùng quy tắc dấu câu` : ""));
+    return { ...out, unitCount: cues.length };
+  }
+
+  // ---------- hiển thị ----------
+  function render() {
+    if (!view) { $("result").hidden = true; return; }
+    $("result").hidden = false;
+    const applied = view.visReport ? view.visReport.planApplied : view.scenes.length;
+    const stale = viewKey !== paramsKey();
+    $("summary-line").textContent = `${view.scenes.length} cảnh · ${view.unitCount} ý · ${(view.totalSec / 60).toFixed(1)} phút → cần ${view.scenes.length} ảnh · TB ${(view.scenes.reduce((a, s) => a + s.subjects, 0) / view.scenes.length).toFixed(1)} vật thể/ảnh · ✦ ${viewModel}` +
+      (applied < view.scenes.length ? ` · ⚠ ${view.scenes.length - applied} cảnh dùng quy tắc dấu câu (AI không đạt)` : "");
+    $("stale").hidden = !stale;
+    $("tbody").innerHTML = view.scenes.map(s => {
+      const tr = document.createElement("tr");
+      [pad(s.si), `${mmss(s.startMs)}–${mmss(s.endMs)}`, `${s.first + 1}–${s.last + 1}`, s.subjects, s.parts.map((t, i) => `${i + 1}. ${t.length > 70 ? t.slice(0, 70) + "…" : t}`).join("\n")].forEach((c, i) => {
+        const td = document.createElement("td"); if (i === 1) td.className = "t"; if (i === 4) td.style.whiteSpace = "pre-line"; td.textContent = c; tr.appendChild(td);
+      });
+      return tr.outerHTML;
+    }).join("");
+    $("pre").value = view.prefix; $("suf").value = view.suffix;
+    const lines = $("numbered").checked ? view.linesNum : view.linesPlain;
+    $("lines").value = lines.join("\n"); $("nlines").textContent = `${lines.length} dòng = ${lines.length} ảnh`;
+  }
+
+  $("ai-run").onclick = async () => {
+    const log = $("ai-log"); log.hidden = false;
+    if (!srtText.trim()) { log.textContent = "✗ Hãy chọn file SRT trước."; return; }
+    if (aiInfo && !aiInfo.serverKey && !$("user-key").value.trim()) { log.textContent = "✗ Hãy nhập khóa API của bạn."; return; }
+    if (aiInfo && aiInfo.needsPassword && !$("app-pw").value.trim()) { log.textContent = "✗ Hãy nhập mật khẩu ứng dụng."; return; }
+    persistCreds();
+    const key = paramsKey(), sec = Math.max(10, +$("sec").value || 20), maxsub = Math.max(2, +$("maxsub").value || 4);
+    const model = $("ai-model-in").value.trim(), fallback = $("ai-fb-in").value.trim() || "none";
+    $("ai-run").disabled = true; log.textContent = "Đang gửi…";
+    try { view = await runAi(sec, maxsub, model, fallback, log); viewKey = key; viewModel = model; render(); }
+    catch (e) { log.textContent += "\n✗ " + e.message; }
+    $("ai-run").disabled = false;
+  };
+
+  // ---------- nhập SRT ----------
+  function load(file) {
+    const r = new FileReader();
+    r.onload = () => { srtText = String(r.result); srtName = file.name; view = null; $("fname").textContent = `${file.name} — ${(file.size / 1024).toFixed(1)} KB`; $("paste").value = ""; render(); };
+    r.readAsText(file, "utf-8");
+  }
+  const drop = $("drop"), input = $("file");
+  drop.onclick = () => input.click();
+  drop.onkeydown = e => { if (e.key === "Enter" || e.key === " ") input.click(); };
+  input.onchange = () => input.files[0] && load(input.files[0]);
+  ["dragenter", "dragover"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add("over"); }));
+  ["dragleave", "drop"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove("over"); }));
+  drop.addEventListener("drop", e => { const f = e.dataTransfer.files[0]; if (f) load(f); });
+  $("paste").oninput = () => { srtText = $("paste").value; srtName = "sub.srt"; view = null; $("fname").textContent = "Nội dung dán"; render(); };
+  ["sec", "maxsub", "numbered"].forEach(id => $(id).addEventListener("input", render));
+
+  // ---------- sao chép / tải ----------
+  async function copyText(text, btn) {
+    try { await navigator.clipboard.writeText(text); } catch (e) { const t = document.createElement("textarea"); t.value = text; document.body.appendChild(t); t.select(); document.execCommand("copy"); t.remove(); }
+    const old = btn.textContent; btn.textContent = "Đã chép ✓"; btn.classList.add("ok");
+    setTimeout(() => { btn.textContent = old; btn.classList.remove("ok"); }, 1300);
+  }
+  document.querySelectorAll("[data-copy]").forEach(btn => btn.onclick = () => copyText($(btn.dataset.copy).value, btn));
+  function save(name, text, type) {
+    const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([text], { type })); a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+  }
+  $("dl-plan").onclick = () => view && save("plan.json", JSON.stringify(view.plan, null, 2), "application/json");
+  $("dl-all").onclick = () => view && save("prompts-all.txt", view.allTxt, "text/plain");
+  initAi();
+})();
+
+</script>
+</body>
+</html>

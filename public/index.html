@@ -70,14 +70,12 @@ input:disabled,button:disabled{opacity:.45;cursor:not-allowed}
     </div>
     <p class="hint">Nhịp nhanh nên 15–20 giây và 3–4 vật thể; lời chậm, trầm thì 25–35 giây. AI quyết số vật thể thực tế từng cảnh, từ 1 đến mức tối đa.</p>
     <div class="opts" style="margin:12px 0 4px">
-      <label id="pw-wrap" hidden>Mật khẩu ứng dụng <input id="app-pw" type="password" autocomplete="off" style="width:150px" style="padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:transparent;color:var(--fg);font:inherit"></label>
       <label id="key-wrap" hidden>Khóa API <input id="user-key" type="password" autocomplete="off" placeholder="sk-…" style="width:230px" style="padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:transparent;color:var(--fg);font:inherit"></label>
       <label id="key-rem-wrap" hidden><input id="key-rem" type="checkbox"> nhớ trong trình duyệt này</label>
       <button id="key-forget" hidden>Xoá khóa đã lưu</button>
     </div>
-    <div class="opts" style="margin:6px 0 4px">
-      <label>Model <input id="ai-model-in" type="text" style="width:190px" style="padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:transparent;color:var(--fg);font:inherit"></label>
-      <label>Dự phòng <input id="ai-fb-in" type="text" style="width:150px" style="padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:transparent;color:var(--fg);font:inherit"></label>
+    <div class="opts" style="margin:6px 0 4px" hidden>
+      <label>Model <input id="ai-model-in" type="text" value="deepseek-v4-flash" style="width:190px" style="padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:transparent;color:var(--fg);font:inherit"></label>
     </div>
     <p class="hint" id="ai-keynote"></p>
     <div class="actions"><button class="primary" id="ai-run">✦ Tạo prompt bằng AI</button></div>
@@ -417,8 +415,7 @@ window.SRTP = SRTP;
   function authHeaders() {
     const h = { "X-Requested-With": "srtwb" };
     if (UI_TOKEN) h["X-UI-Token"] = UI_TOKEN;
-    const pw = $("app-pw").value.trim(), key = $("user-key").value.trim();
-    if (pw) h["X-App-Password"] = pw;
+    const key = $("user-key").value.trim();
     if (key && !$("key-wrap").hidden) h["X-LLM-Key"] = key;
     return h;
   }
@@ -433,7 +430,6 @@ window.SRTP = SRTP;
       const k = $("user-key").value.trim(), rem = $("key-rem").checked;
       localStorage.removeItem("srtwb_key"); sessionStorage.removeItem("srtwb_key");
       if (k) (rem ? localStorage : sessionStorage).setItem("srtwb_key", k);
-      const pw = $("app-pw").value.trim(); if (pw) sessionStorage.setItem("srtwb_pw", pw);
       $("key-forget").hidden = !(k && rem);
     } catch (e) { /* trình duyệt chặn lưu trữ: bỏ qua */ }
   }
@@ -446,14 +442,13 @@ window.SRTP = SRTP;
       $("off").hidden = false; $("off").textContent = "Máy chủ chưa cấu hình AI: chủ trang cần đặt LLM_BASE_URL (và LLM_API_KEY, hoặc bật ALLOW_USER_KEYS=1).";
       $("ai-run").disabled = true; return;
     }
-    $("pw-wrap").hidden = !aiInfo.needsPassword;
     const userKeys = aiInfo.allowUserKeys && !aiInfo.serverKey;   // máy chủ đã có khóa thì người dùng khỏi nhập
     $("key-wrap").hidden = !userKeys; $("key-rem-wrap").hidden = !userKeys;
-    $("ai-model-in").value = aiInfo.model; $("ai-fb-in").value = aiInfo.fallback || "";
+    $("ai-model-in").value = "deepseek-v4-flash";
     $("ai-keynote").textContent = aiInfo.serverKey
       ? "Máy chủ đã có khóa API; khóa không bao giờ vào trình duyệt."
       : "Nhập khóa API của bạn: khóa chỉ đi tới máy chủ này (qua HTTPS) cho đúng lần gọi này, không được lưu ở máy chủ." + (aiInfo.secure ? "" : " ⚠ Kết nối này KHÔNG mã hoá (không phải HTTPS): đừng nhập khóa ở đây.");
-    $("user-key").value = saved("srtwb_key"); $("app-pw").value = saved("srtwb_pw");
+    $("user-key").value = saved("srtwb_key");
     $("key-rem").checked = !!localStorage.getItem("srtwb_key"); $("key-forget").hidden = !userKeys || !saved("srtwb_key");
   }
 
@@ -522,12 +517,11 @@ window.SRTP = SRTP;
     const log = $("ai-log"); log.hidden = false;
     if (!srtText.trim()) { log.textContent = "✗ Hãy chọn file SRT trước."; return; }
     if (aiInfo && !aiInfo.serverKey && !$("user-key").value.trim()) { log.textContent = "✗ Hãy nhập khóa API của bạn."; return; }
-    if (aiInfo && aiInfo.needsPassword && !$("app-pw").value.trim()) { log.textContent = "✗ Hãy nhập mật khẩu ứng dụng."; return; }
     persistCreds();
     const key = paramsKey(), sec = Math.max(10, +$("sec").value || 20), maxsub = Math.max(2, +$("maxsub").value || 4);
-    const model = $("ai-model-in").value.trim(), fallback = $("ai-fb-in").value.trim() || "none";
+    const model = "deepseek-v4-flash";
     $("ai-run").disabled = true; log.textContent = "Đang gửi…";
-    try { view = await runAi(sec, maxsub, model, fallback, log); viewKey = key; viewModel = model; render(); }
+    try { view = await runAi(sec, maxsub, model, "none", log); viewKey = key; viewModel = model; render(); }
     catch (e) { log.textContent += "\n✗ " + e.message; }
     $("ai-run").disabled = false;
   };

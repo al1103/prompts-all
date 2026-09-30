@@ -6,7 +6,7 @@ const { cfg, json, readBody, gate, rateOk, chat, secure, sanitize, MODEL_RE, KEY
 module.exports = async (req, res) => {
   const c = cfg();
   if (req.method !== "POST") return json(res, 405, { error: "method not allowed" }, { Allow: "POST" });
-  if (!(await gate(req, res, c, true))) return;
+  if (!(await gate(req, res, c))) return;
   if (!c.base) return json(res, 409, { error: "máy chủ chưa đặt LLM_BASE_URL" });
 
   // --- chọn khóa ---
@@ -14,7 +14,6 @@ module.exports = async (req, res) => {
   let key;
   if (userKey) {
     if (!c.allowUserKeys) return json(res, 403, { error: "máy chủ không cho nhập khóa riêng" });
-    if (!secure(req)) return json(res, 400, { error: "cần HTTPS để gửi khóa API" });
     if (!KEY_RE.test(userKey)) return json(res, 400, { error: "khóa API không hợp lệ" });
     key = userKey;
   } else {
@@ -34,19 +33,12 @@ module.exports = async (req, res) => {
   if (msgs[0].role !== "user") return json(res, 400, { error: "messages không hợp lệ" });
   const nScenes = (msgs[0].content.match(/^CẢNH \d+ \(/gm) || []).length;
   if (nScenes > c.maxScenesPerCall) return json(res, 400, { error: `mỗi lượt gọi tối đa ${c.maxScenesPerCall} cảnh` });
-  const model = String(body.model || c.model).trim();
-  const fallback = String(body.fallback || c.fallback).trim();
-  if (!MODEL_RE.test(model) || (fallback.toLowerCase() !== "none" && !MODEL_RE.test(fallback))) return json(res, 400, { error: "tên model không hợp lệ" });
+  const model = "deepseek-v4-flash";
   if (!rateOk(req, c)) return json(res, 429, { error: "quá nhiều lượt gọi, thử lại sau ít phút" }, { "Retry-After": "60" });
 
-  // --- gọi AI (model chính, rồi dự phòng) ---
-  const models = [model].concat(fallback.toLowerCase() !== "none" && fallback !== model ? [fallback] : []);
-  let last = "";
-  for (const m of models) {
-    const r = await chat(c, key, m, msgs);
-    if (r.ok) return json(res, 200, { content: r.content, model: m });
-    if (r.fatal) return json(res, 502, { error: "khóa API bị từ chối (" + r.error + "). Kiểm tra khóa, và xem dịch vụ có giới hạn khóa chỉ dùng cho một số ứng dụng không.", upstream: r.status });
-    last = `model '${m}': ${r.error}`;
-  }
-  return json(res, 502, { error: sanitize(last, [key]) });
+  // --- gọi AI ---
+  const r = await chat(c, key, model, msgs);
+  if (r.ok) return json(res, 200, { content: r.content, model });
+  if (r.fatal) return json(res, 502, { error: "khóa API bị từ chối (" + r.error + "). Kiểm tra khóa, và xem dịch vụ có giới hạn khóa chỉ dùng cho một số ứng dụng không.", upstream: r.status });
+  return json(res, 502, { error: sanitize(`model '${model}': ${r.error}`, [key]) });
 };
